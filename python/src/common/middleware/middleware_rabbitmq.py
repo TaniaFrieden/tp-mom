@@ -1,14 +1,64 @@
 import pika
 import random
 import string
-from .middleware import MessageMiddlewareQueue, MessageMiddlewareExchange
+from .middleware import (
+    MessageMiddlewareCloseError,
+    MessageMiddlewareDisconnectedError,
+    MessageMiddlewareExchange,
+    MessageMiddlewareMessageError,
+    MessageMiddlewareQueue,
+)
 
 class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 
     def __init__(self, host, queue_name):
-        pass
+        self.host = host
+        self.queue_name = queue_name
+        self.connection = None
+        self.channel = None
+        self.consumer_tag = None
+
+        try:
+            parameters = pika.ConnectionParameters(host=self.host)
+            self.connection = pika.BlockingConnection(parameters)
+            self.channel = self.connection.channel()
+            self.channel.queue_declare(queue=self.queue_name)
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError() from exc
+
+    def start_consuming(self, on_message_callback):
+        raise NotImplementedError
+
+    def stop_consuming(self):
+        return None
+
+    def send(self, message):
+        raise NotImplementedError
+
+    def close(self):
+        try:
+            if self.channel is not None and self.channel.is_open:
+                self.channel.close()
+            if self.connection is not None and self.connection.is_open:
+                self.connection.close()
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareCloseError() from exc
 
 class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
     
     def __init__(self, host, exchange_name, routing_keys):
-        pass
+        raise NotImplementedError
+
+    def start_consuming(self, on_message_callback):
+        raise NotImplementedError
+
+    def stop_consuming(self):
+        return None
+
+    def send(self, message):
+        raise NotImplementedError
+
+    def close(self):
+        raise NotImplementedError

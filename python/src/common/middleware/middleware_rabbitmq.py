@@ -35,7 +35,16 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
         return None
 
     def send(self, message):
-        raise NotImplementedError
+        try:
+            self.channel.basic_publish(
+                exchange="",
+                routing_key=self.queue_name,
+                body=message,
+            )
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError() from exc
 
     def close(self):
         try:

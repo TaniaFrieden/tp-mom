@@ -90,7 +90,40 @@ class MessageMiddlewareQueueRabbitMQ(MessageMiddlewareQueue):
 class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
     
     def __init__(self, host, exchange_name, routing_keys):
-        raise NotImplementedError
+        self.host = host
+        self.exchange_name = exchange_name
+        self.routing_keys = routing_keys
+        self.queue_name = None
+        self.connection = None
+        self.channel = None
+        self.consumer_tag = None
+
+        try:
+            parameters = pika.ConnectionParameters(host=self.host)
+            self.connection = pika.BlockingConnection(parameters)
+            self.channel = self.connection.channel()
+            self.channel.exchange_declare(
+                exchange=self.exchange_name,
+                exchange_type="direct",
+            )
+
+            queue_result = self.channel.queue_declare(
+                queue="",
+                exclusive=True,
+                auto_delete=True,
+            )
+            self.queue_name = queue_result.method.queue
+
+            for routing_key in self.routing_keys:
+                self.channel.queue_bind(
+                    exchange=self.exchange_name,
+                    queue=self.queue_name,
+                    routing_key=routing_key,
+                )
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError() from exc
 
     def start_consuming(self, on_message_callback):
         raise NotImplementedError

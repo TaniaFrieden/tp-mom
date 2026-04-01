@@ -296,3 +296,4 @@ python/src/common/middleware/middleware_rabbitmq.py
 golang/internal/solution
 
 *.md
+*.puml

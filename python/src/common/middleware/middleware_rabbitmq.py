@@ -132,7 +132,17 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
         return None
 
     def send(self, message):
-        raise NotImplementedError
+        try:
+            for routing_key in self.routing_keys:
+                self.channel.basic_publish(
+                    exchange=self.exchange_name,
+                    routing_key=routing_key,
+                    body=message,
+                )
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError() from exc
 
     def close(self):
         try:

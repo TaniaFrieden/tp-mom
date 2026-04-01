@@ -135,4 +135,10 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
         raise NotImplementedError
 
     def close(self):
-        raise NotImplementedError
+        try:
+            if self.channel is not None and self.channel.is_open:
+                self.channel.close()
+            if self.connection is not None and self.connection.is_open:
+                self.connection.close()
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareCloseError() from exc

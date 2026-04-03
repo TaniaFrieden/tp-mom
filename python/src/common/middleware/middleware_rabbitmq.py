@@ -126,10 +126,42 @@ class MessageMiddlewareExchangeRabbitMQ(MessageMiddlewareExchange):
             raise MessageMiddlewareMessageError() from exc
 
     def start_consuming(self, on_message_callback):
-        raise NotImplementedError
+        def _consume_callback(channel, method, properties, body):
+            delivery_tag = method.delivery_tag
+
+            def ack():
+                channel.basic_ack(delivery_tag=delivery_tag)
+
+            def nack():
+                channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+
+            on_message_callback(body, ack, nack)
+
+        try:
+            self.channel.basic_qos(prefetch_count=1)
+            self.consumer_tag = self.channel.basic_consume(
+                queue=self.queue_name,
+                on_message_callback=_consume_callback,
+                auto_ack=False,
+            )
+            self.channel.start_consuming()
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError() from exc
+        finally:
+            self.consumer_tag = None
 
     def stop_consuming(self):
-        return None
+        try:
+            if (
+                self.channel is not None
+                and self.channel.is_open
+                and self.consumer_tag is not None
+            ):
+                self.channel.stop_consuming()
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError() from exc
 
     def send(self, message):
         try:

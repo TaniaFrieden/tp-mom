@@ -32,7 +32,8 @@ def _wrap_pika_callback(on_message_callback):
             channel.basic_ack(delivery_tag=delivery_tag)
 
         def nack():
-            # requeue=True devuelve el mensaje a la cola para que otro consumidor pueda procesarlo en caso de fallo transitorio
+            # requeue=True devuelve el mensaje a la cola para que otro
+            # consumidor pueda procesarlo en caso de fallo transitorio.
             channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
 
         on_message_callback(body, ack, nack)
@@ -61,6 +62,38 @@ class _BaseMiddlewareRabbitMQ:
                 self.connection.close()
         except pika.exceptions.AMQPError:
             pass
+
+    def start_consuming(self, on_message_callback):
+        """Inicia el loop bloqueante de consumo sobre la cola asociada a esta instancia
+
+        Args:
+            on_message_callback: funcion con firma (message, ack, nack) que se
+                invoca por cada mensaje recibido.
+
+        Raises:
+            MessageMiddlewareDisconnectedError: si se pierde la conexion durante el consumo
+            MessageMiddlewareMessageError: ante cualquier otro error de AMQP
+        """
+        try:
+            self.channel.basic_qos(prefetch_count=PREFETCH_COUNT)
+            self.consumer_tag = self.channel.basic_consume(
+                queue=self.queue_name,
+                on_message_callback=_wrap_pika_callback(on_message_callback),
+                auto_ack=False,
+            )
+            self.channel.start_consuming()
+        except pika.exceptions.AMQPConnectionError as exc:
+            raise MessageMiddlewareDisconnectedError(
+                f"Connection lost while consuming from '{self._name}'"
+            ) from exc
+        except pika.exceptions.AMQPError as exc:
+            raise MessageMiddlewareMessageError(
+                f"Error while consuming from '{self._name}'"
+            ) from exc
+        finally:
+            # Se limpia el tag independientemente de como termino el loop, para
+            # que stop_consuming() no intente detener un consumer ya inexistente.
+            self.consumer_tag = None
 
     def stop_consuming(self):
         """Detiene el loop de consumo si esta instancia habia registrado un consumer
@@ -105,7 +138,9 @@ class _BaseMiddlewareRabbitMQ:
 class MessageMiddlewareQueueRabbitMQ(_BaseMiddlewareRabbitMQ, MessageMiddlewareQueue):
     """Implementacion de work queue sobre RabbitMQ
 
-    Multiples instancias apuntando a la misma cola comparten los mensajes en round-robin. Cada instancia maneja su propia conexion y canal de forma independiente
+    Multiples instancias apuntando a la misma cola comparten los mensajes en
+    round-robin. Cada instancia maneja su propia conexion y canal de forma
+    independiente.
     """
 
     def __init__(self, host, queue_name):
@@ -141,38 +176,6 @@ class MessageMiddlewareQueueRabbitMQ(_BaseMiddlewareRabbitMQ, MessageMiddlewareQ
             raise MessageMiddlewareMessageError(
                 f"Failed to declare queue '{self.queue_name}'"
             ) from exc
-
-    def start_consuming(self, on_message_callback):
-        """Inicia el loop bloqueante de consumo sobre la cola
-
-        El loop se detiene cuando otro hilo llama a stop_consuming() o cuando ocurre un error de conexion
-
-        Args:
-            on_message_callback: funcion con firma (message, ack, nack) que se invoca por cada mensaje recibido.
-
-        Raises:
-            MessageMiddlewareDisconnectedError: si se pierde la conexion durantel consumo
-            MessageMiddlewareMessageError: ante cualquier otro error de AMQP
-        """
-        try:
-            self.channel.basic_qos(prefetch_count=PREFETCH_COUNT)
-            self.consumer_tag = self.channel.basic_consume(
-                queue=self.queue_name,
-                on_message_callback=_wrap_pika_callback(on_message_callback),
-                auto_ack=False,
-            )
-            self.channel.start_consuming()
-        except pika.exceptions.AMQPConnectionError as exc:
-            raise MessageMiddlewareDisconnectedError(
-                f"Connection lost while consuming from queue '{self.queue_name}'"
-            ) from exc
-        except pika.exceptions.AMQPError as exc:
-            raise MessageMiddlewareMessageError(
-                f"Error while consuming from queue '{self.queue_name}'"
-            ) from exc
-        finally:
-            # Se limpia el tag independientemente de como termino el loop, para que stop_consuming() no intente detener un consumer ya inexistente
-            self.consumer_tag = None
 
     def send(self, message):
         """Publica un mensaje en la cola usando el exchange por defecto de RabbitMQ.
@@ -215,7 +218,8 @@ class MessageMiddlewareExchangeRabbitMQ(_BaseMiddlewareRabbitMQ, MessageMiddlewa
         """Declara el exchange y crea una cola exclusiva bindeada a las routing keys
 
         Si el exchange ya existe con parametros compatibles, RabbitMQ lo reutiliza.
-        Se puede pasar una o varias routing keys, la instancia recibira mensajes publicados con cualquiera de ellas.
+        Se puede pasar una o varias routing keys; la instancia recibira mensajes
+        publicados con cualquiera de ellas.
 
         Args:
             host: direccion del broker RabbitMQ
@@ -224,7 +228,8 @@ class MessageMiddlewareExchangeRabbitMQ(_BaseMiddlewareRabbitMQ, MessageMiddlewa
 
         Raises:
             MessageMiddlewareDisconnectedError: si no se puede conectar al broker
-            MessageMiddlewareMessageError: si falla la declaracion del exchange, la cola o los bindings
+            MessageMiddlewareMessageError: si falla la declaracion del exchange,
+                la cola o los bindings
         """
         self.host = host
         self.exchange_name = exchange_name
@@ -270,38 +275,6 @@ class MessageMiddlewareExchangeRabbitMQ(_BaseMiddlewareRabbitMQ, MessageMiddlewa
             raise MessageMiddlewareMessageError(
                 f"Failed to initialize exchange '{self.exchange_name}'"
             ) from exc
-
-    def start_consuming(self, on_message_callback):
-        """Inicia el loop bloqueante de consumo sobre la cola exclusiva del exchange
-
-        Consume desde la cola anonima creada en el constructor y bindeada a las routing keys configuradas
-
-        Args:
-            on_message_callback: funcion con firma (message, ack, nack) que se
-                invoca por cada mensaje recibido
-
-        Raises:
-            MessageMiddlewareDisconnectedError: si se pierde la conexion durante el consumo
-            MessageMiddlewareMessageError: ante cualquier otro error de AMQP
-        """
-        try:
-            self.channel.basic_qos(prefetch_count=PREFETCH_COUNT)
-            self.consumer_tag = self.channel.basic_consume(
-                queue=self.queue_name,
-                on_message_callback=_wrap_pika_callback(on_message_callback),
-                auto_ack=False,
-            )
-            self.channel.start_consuming()
-        except pika.exceptions.AMQPConnectionError as exc:
-            raise MessageMiddlewareDisconnectedError(
-                f"Connection lost while consuming from exchange '{self.exchange_name}'"
-            ) from exc
-        except pika.exceptions.AMQPError as exc:
-            raise MessageMiddlewareMessageError(
-                f"Error while consuming from exchange '{self.exchange_name}'"
-            ) from exc
-        finally:
-            self.consumer_tag = None
 
     def send(self, message):
         """Publica el mensaje en el exchange por cada routing key configurada

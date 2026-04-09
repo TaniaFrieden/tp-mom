@@ -2,7 +2,7 @@
 
 ## Descripción general
 
-Se implementaron las dos clases requeridas por el TP sobre RabbitMQ usando la librería `pika`:
+La implementación fue desarrollada en Python. Se implementaron las dos clases requeridas por el TP usando la librería `pika` como cliente de RabbitMQ:
 
 - `MessageMiddlewareQueueRabbitMQ`: work queue con múltiples consumidores compitiendo por los mensajes.
 - `MessageMiddlewareExchangeRabbitMQ`: exchange directo con cola exclusiva por consumidor para soportar broadcast.
